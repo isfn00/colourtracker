@@ -1,0 +1,83 @@
+#Note, this code does not have a lot of fail safe protection, 
+#I only just added the input for this version I am uploading,
+#so don't be surprised if you find an error, just don't do what
+#you were doing. I am aware of the fact that not all data is 
+#saved, just run it a few time/split up the mp4 to fix.
+
+import cv2
+import csv
+import numpy as np
+
+# Define the initial target color and tolerance in BGR color space
+print('What blue do you want to use to find the inital colour?')
+blue = input()
+print('What green do you want to use to find the inital colour?')
+green = input()
+print('What red do you want to use to find the inital colour?')
+red = input()
+target_color = np.array([blue, green, red])
+tolerance = 10
+
+# Open the video file
+print("What file do you want to track? (no need to add '.mp4')")
+cap = cv2.VideoCapture(input()+'.mp4')
+
+# Create a CSV file and write the headers
+print("What file do you want to output to? (no need to add '.csv')")
+with open(input()+'.csv', 'w', newline='') as csvfile:
+    fieldnames = ['frame', 'x', 'y']
+    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+    writer.writeheader()
+
+    # Initialize the frame counter, previous centroid, and previous target color
+    frame_num = 0
+    prev_centroid = None
+    prev_target_color = target_color
+
+    while(cap.isOpened()):
+        # Read a frame from the video
+        ret, frame = cap.read()
+        if ret == False:
+            break
+
+        # Convert the target color to HSV color space for more robust color detection
+        target_color_hsv = cv2.cvtColor(np.uint8([[target_color]]), cv2.COLOR_BGR2HSV)[0][0]
+
+        # Define the range of acceptable colors based on target color and tolerance
+        lower_color = np.array([max(0, target_color_hsv[i] - tolerance, 0) for i in range(3)])
+        upper_color = np.array([min(255, target_color_hsv[i] + tolerance, 255) for i in range(3)])
+
+        # Create a binary mask of the target color range
+        mask = cv2.inRange(cv2.cvtColor(frame, cv2.COLOR_BGR2HSV), lower_color, upper_color)
+
+        # Detect blobs in the binary image
+        params = cv2.SimpleBlobDetector_Params()
+        detector = cv2.SimpleBlobDetector_create(params)
+        keypoints = detector.detect(mask)
+
+        # Separate blobs that are not connected
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        blob_stats = [stats[i] for i in range(1, num_labels)]  # ignore background label
+        blob_centroids = [centroids[i] for i in range(1, num_labels)]
+
+        # Filter the blobs to find the largest one
+        if len(blob_stats) > 0:
+            largest_blob_idx = np.argmax([s[4] for s in blob_stats])
+            largest_blob_centroid = blob_centroids[largest_blob_idx]
+
+            # Calculate the average color of the pixels within the largest blob
+            blob_mask = np.zeros_like(mask)
+            blob_mask[labels == largest_blob_idx + 1] = 255
+            average_color = cv2.mean(frame, mask=blob_mask)[:3]
+
+            # Update the target color for the next frame
+            target_color = np.uint8(average_color)
+
+            # Check if the current centroid is significantly different from the previous centroid
+            if prev_centroid is None or np.linalg.norm(largest_blob_centroid - prev_centroid) > 10:
+                # Write the x and y coordinates of the largest blob to the CSV file
+                writer.writerow({'frame': frame_num, 'x': largest_blob_centroid[0], 'y': largest_blob_centroid[1]})
+                prev_centroid = largest_blob_centroid
+
+            # Display the video with the largest blob highlighted
+            cv2
